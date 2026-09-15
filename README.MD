@@ -1,4 +1,4 @@
-# Terraform: EC2 → RDS + Secrets/Params + Observability + Incident Alerts
+# AWS-Enterprise-App-Platform
 
 ![AWS](https://img.shields.io/badge/AWS-CLOUD-F3702A?style=for-the-badge&logo=amazonaws&logoColor=white)
 ![Terraform](https://img.shields.io/badge/TERRAFORM-%E2%89%A51.5.0-7B42BC?style=for-the-badge&logo=terraform&logoColor=white)
