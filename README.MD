@@ -17,7 +17,7 @@
 
 # Mission Objective
 
-This project stands up a private, production-shaped AWS environment entirely from code — a 3-AZ VPC, an EC2 app host, and a private MySQL RDS instance wired together through IAM and Secrets Manager (no hardcoded credentials), with CloudWatch alarms and an SNS incident alert so a real DB outage pages someone instead of failing silently. Clone the repo and follow the steps below in order to reproduce the same stack in your own AWS account.
+This project stands up a private, production-shaped AWS environment entirely from code — a 3-AZ VPC, an EC2 app host, and a private MySQL RDS instance wired together through IAM and Secrets Manager (no hardcoded credentials), with CloudWatch alarms and an SNS incident alert so a real DB outage pages someone instead of failing silently. 
 
 # Checkpoints
 
