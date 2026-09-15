@@ -7,7 +7,7 @@ locals {
   db_username       = "admin"
   my_ip_cidr        = "${chomp(data.http.my_public_ip.response_body)}/32"
   region            = "eu-west-2"
-  secret_name       = "lab/rds/mysql_v6"
+  secret_name       = "lab/rds/mysql_v3"
 
   tags = {
     project     = local.project_name

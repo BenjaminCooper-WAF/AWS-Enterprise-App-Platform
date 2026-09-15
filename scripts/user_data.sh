@@ -1,38 +1,77 @@
-#!/bin/bash
-dnf update -y
-dnf install -y python3-pip
-pip3 install flask pymysql boto3
+#!/bin/bash -xe
+exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
 
+# Package manager (AL2=yum, AL2023=dnf)
+if command -v dnf >/dev/null 2>&1; then
+  PM=dnf
+else
+  PM=yum
+fi
 
+$PM update -y
+$PM install -y python3 python3-pip
+
+# venv best-effort
+$PM install -y python3-venv || true
 
 mkdir -p /opt/rdsapp
+
+# dedicated user
+id -u rdsapp >/dev/null 2>&1 || useradd --system --home /opt/rdsapp --shell /sbin/nologin rdsapp
+chown -R rdsapp:rdsapp /opt/rdsapp
+
+# venv
+python3 -m venv /opt/rdsapp/venv || true
+/opt/rdsapp/venv/bin/pip install --upgrade pip
+/opt/rdsapp/venv/bin/pip install flask "PyMySQL[rsa]" boto3 watchtower
+
 cat >/opt/rdsapp/app.py <<'PY'
 import json
 import os
+import time
+import logging
 import boto3
 import pymysql
 from flask import Flask, request
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("rdsapp")
+
 REGION = os.environ.get("AWS_REGION", "eu-west-2")
-SECRET_ID = os.environ.get("SECRET_ID", "lab/rds/mysql1")
+SECRET_ID = os.environ.get("SECRET_ID", "lab/rds/mysql_v3")
+
+# Optional CloudWatch Logs via Watchtower (won't crash app if it fails)
+try:
+    import watchtower
+    cw = watchtower.CloudWatchLogHandler(
+        log_group_name="/aws/ec2/lab1c-rds-app",
+        stream_name=f"rdsapp-{int(time.time())}",
+        send_interval=10,
+        boto3_client=boto3.client("logs", region_name=REGION),
+    )
+    logger.addHandler(cw)
+except Exception as e:
+    logger.warning("Watchtower disabled: %s", e)
 
 secrets = boto3.client("secretsmanager", region_name=REGION)
 
 def get_db_creds():
     resp = secrets.get_secret_value(SecretId=SECRET_ID)
-    s = json.loads(resp["SecretString"])
-    # When you use "Credentials for RDS database", AWS usually stores:
-    # username, password, host, port, db_name (sometimes)
-    return s
+    return json.loads(resp["SecretString"])
+
+def get_db_name(c):
+    return c.get("db_name") or c.get("dbname") or "labdb"
 
 def get_conn():
     c = get_db_creds()
-    host = c["host"]
-    user = c["username"]
-    password = c["password"]
-    port = int(c.get("port", 3306))
-    db = c.get("db_name", "labdb")  # we'll create this if it doesn't exist
-    return pymysql.connect(host=host, user=user, password=password, port=port, database=db, autocommit=True)
+    return pymysql.connect(
+        host=c["host"],
+        user=c["username"],
+        password=c["password"],
+        port=int(c.get("port", 3306)),
+        database=get_db_name(c),
+        autocommit=True,
+    )
 
 app = Flask(__name__)
 
@@ -40,62 +79,81 @@ app = Flask(__name__)
 def home():
     return """
     <h2>EC2 → RDS Notes App</h2>
-    <p>POST /add?note=hello</p>
+    <p>GET /init</p>
+    <p>GET /add?note=hello</p>
     <p>GET /list</p>
     """
 
 @app.route("/init")
 def init_db():
-    c = get_db_creds()
-    host = c["host"]
-    user = c["username"]
-    password = c["password"]
-    port = int(c.get("port", 3306))
+    try:
+        c = get_db_creds()
+        db = get_db_name(c)
 
-    # connect without specifying a DB first
-    conn = pymysql.connect(host=host, user=user, password=password, port=port, autocommit=True)
-    cur = conn.cursor()
-    cur.execute("CREATE DATABASE IF NOT EXISTS labdb;")
-    cur.execute("USE labdb;")
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS notes (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            note VARCHAR(255) NOT NULL
-        );
-    """)
-    cur.close()
-    conn.close()
-    return "Initialized labdb + notes table."
+        conn = pymysql.connect(
+            host=c["host"],
+            user=c["username"],
+            password=c["password"],
+            port=int(c.get("port", 3306)),
+            autocommit=True,
+        )
+        cur = conn.cursor()
+        cur.execute(f"CREATE DATABASE IF NOT EXISTS `{db}`;")
+        cur.execute(f"USE `{db}`;")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS notes (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                note VARCHAR(255) NOT NULL
+            );
+        """)
+        cur.close()
+        conn.close()
+        logger.info("Initialized DB=%s", db)
+        return f"Initialized {db} + notes table."
+    except Exception as e:
+        logger.exception("init_db failed")
+        return f"Error during initialization: {e}", 500
 
-@app.route("/add", methods=["POST", "GET"])
+@app.route("/add", methods=["GET", "POST"])
 def add_note():
     note = request.args.get("note", "").strip()
     if not note:
         return "Missing note param. Try: /add?note=hello", 400
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO notes(note) VALUES(%s);", (note,))
-    cur.close()
-    conn.close()
-    return f"Inserted note: {note}"
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO notes(note) VALUES(%s);", (note,))
+        cur.close()
+        conn.close()
+        return f"Inserted note: {note}"
+    except Exception as e:
+        logger.exception("add_note failed")
+        return f"Error adding note: {e}", 500
 
 @app.route("/list")
 def list_notes():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT id, note FROM notes ORDER BY id DESC;")
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    out = "<h3>Notes</h3><ul>"
-    for r in rows:
-        out += f"<li>{r[0]}: {r[1]}</li>"
-    out += "</ul>"
-    return out
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT id, note FROM notes ORDER BY id DESC;")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        out = "<h3>Notes</h3><ul>"
+        for r in rows:
+            out += f"<li>{r[0]}: {r[1]}</li>"
+        out += "</ul>"
+        return out
+    except Exception as e:
+        logger.exception("list_notes failed")
+        return f"Error listing notes: {e}", 500
 
 if __name__ == "__main__":
+    logger.info("Starting Flask on :80")
     app.run(host="0.0.0.0", port=80)
 PY
+
+chown -R rdsapp:rdsapp /opt/rdsapp
 
 cat >/etc/systemd/system/rdsapp.service <<'SERVICE'
 [Unit]
@@ -103,9 +161,17 @@ Description=EC2 to RDS Notes App
 After=network.target
 
 [Service]
+User=rdsapp
+Group=rdsapp
 WorkingDirectory=/opt/rdsapp
-Environment=SECRET_ID=lab/rds/mysql1
-ExecStart=/usr/bin/python3 /opt/rdsapp/app.py
+Environment=AWS_REGION=eu-west-2
+Environment=SECRET_ID=lab/rds/mysql_v3
+
+# allow non-root bind to port 80
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+ExecStart=/opt/rdsapp/venv/bin/python /opt/rdsapp/app.py
 Restart=always
 
 [Install]
@@ -114,4 +180,4 @@ SERVICE
 
 systemctl daemon-reload
 systemctl enable rdsapp
-systemctl start rdsapp
+systemctl restart rdsapp

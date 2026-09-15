@@ -17,9 +17,8 @@ resource "aws_subnet" "public_v2" {
   availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
   tags = merge(
-    local.tags,
-    { Name = "${var.project_name}-public-subnet-${count.index + 1}" }
-  )
+    local.tags, {
+  Name = "${var.project_name}-public-subnet-${count.index + 1}" })
 }
 
 # Private Subnets (3 AZs)
@@ -28,11 +27,10 @@ resource "aws_subnet" "private_v2" {
   vpc_id                  = aws_vpc.lab1c_vpc.id
   cidr_block              = cidrsubnet("10.237.0.0/16", 8, count.index + 110)
   availability_zone       = data.aws_availability_zones.available.names[count.index]
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
   tags = merge(
-    local.tags,
-    { Name = "${var.project_name}-private-subnet-${count.index + 1}" }
-  )
+    local.tags, {
+  Name = "${var.project_name}-private-subnet-${count.index + 1}" })
 }
 
 # Internet gateway
@@ -61,7 +59,8 @@ resource "aws_nat_gateway" "nat" {
     local.tags,
     { Name = "${local.project_name}-nat" }
   )
-  depends_on = [aws_internet_gateway.lab_igw]
+  depends_on = [aws_internet_gateway.lab_igw, aws_route_table_association.public
+  ]
 }
 
 # Explanation: Public route table = “open lanes” to the galaxy via IGW.
@@ -79,7 +78,7 @@ resource "aws_route_table" "public" {
 
 # Explanation: Attach public subnets to the “public lanes.”
 resource "aws_route_table_association" "public" {
-  count          = 2
+  count          = length(aws_subnet.public_v2)
   subnet_id      = aws_subnet.public_v2[count.index].id
   route_table_id = aws_route_table.public.id
 }
@@ -89,18 +88,17 @@ resource "aws_route_table" "private" {
   vpc_id = aws_vpc.lab1c_vpc.id
 
   route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.lab_igw.id
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat.id
   }
-  tags = merge(
-    local.tags,
-    { Name = "${var.project_name}-private-rt" }
+  tags = merge(local.tags, {
+    Name = "${var.project_name}-private-rt" }
   )
 }
 # Explanation: Attach private subnets to the “stealth lanes.”
 resource "aws_route_table_association" "private" {
-  count          = 2
-  subnet_id      = aws_subnet.private_v2[0].id
+  count          = length(aws_subnet.private_v2)
+  subnet_id      = aws_subnet.private_v2[count.index].id
   route_table_id = aws_route_table.private.id
 }
 # Explanation: EC2 SG is lab1c’s bodyguard—only let in what you mean to.
@@ -186,7 +184,7 @@ resource "aws_db_subnet_group" "lab_rds" {
 resource "aws_db_instance" "lab_rds" {
   identifier             = "${local.project_name}-mysql"
   engine                 = "mysql"
-  engine_version         = "8.4"
+  engine_version         = "8.4.7"
   instance_class         = local.db_instance_class
   allocated_storage      = 20
   username               = local.db_username
@@ -234,21 +232,27 @@ resource "aws_iam_policy" "secretsmanager_read_policy" {
       {
         "Sid" : "ReadSpecificSecret",
         "Effect" : "Allow",
-        "Action" : ["secretsmanager:GetSecretValue"],
-        "Resource" : "arn:aws:secretsmanager:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}secret:${var.secrets_manager}" #Remember add a or your policy will not work
+        "Action" : ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+        "Resource" : "arn:aws:secretsmanager:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:secret:${var.secrets_manager}*" #Remember add a or your policy will not work
       }
     ]
   })
 }
+
 resource "aws_iam_role_policy_attachment" "example_attachment4" {
   role = aws_iam_role.ec2_role.id
   # Secrets Manager Read Access to allow access to RDS credentials
   policy_arn = aws_iam_policy.secretsmanager_read_policy.arn
 }
 
+resource "aws_iam_role_policy_attachment" "ssm_core" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_iam_role_policy" "ssm_policy" {
   name = "${local.project_name}-ssm-access"
-  role = aws_iam_role.ec2_role.id
+  role = aws_iam_role.ec2_role.name
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -264,7 +268,7 @@ resource "aws_iam_role_policy" "ssm_policy" {
 
 resource "aws_iam_role_policy" "cloudwatch_policy" {
   name = "${local.project_name}-cloudwatch-access"
-  role = aws_iam_role.ec2_role.id
+  role = aws_iam_role.ec2_role.name
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -275,9 +279,9 @@ resource "aws_iam_role_policy" "cloudwatch_policy" {
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
           "logs:PutLogEvents",
-          "logs:DescribeLogStream",
+          "logs:DescribeLogStreams",
         ]
-        Resource = "arn:aws:logs:${local.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/ec2/${local.project_name}-rds-app*"
+        Resource = "arn:aws:logs:${local.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/ec2/${local.project_name}-rds-app*:*"
       }
     ]
   })
@@ -305,7 +309,8 @@ resource "aws_instance" "lab_ec2" {
 
   # TODO: student supplies user_data to install app + CW agent + configure log shipping
   # user_data = file("${path.module}/user_data.sh")
-  user_data = file("./scripts/user_data.sh")
+  user_data_replace_on_change = true
+  user_data                   = file("./scripts/user_data.sh")
 
   tags = merge(
     local.tags,

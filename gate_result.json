@@ -3,7 +3,7 @@
   "timestamp_utc": "2026-01-20T01:31:40Z",
   "region": "eu-west-2",
   "instance_id": "i-01cde651cc3ce3ebf",
-  "secret_id": "lab1a-rds-mysql",
+  "secret_id": "lab/rds/mysql_v3",
   "resolved_instance_profile_arn": "None",
   "resolved_role_name": "",
   "caller_arn": "arn:aws:iam::961341540291:user/Benjamin",

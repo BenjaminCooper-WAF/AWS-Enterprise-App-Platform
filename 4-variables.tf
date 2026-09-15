@@ -46,7 +46,7 @@ variable "db_engine" {
 variable "secrets_manager" {
   description = "secrets Manager secret name for DB credentials."
   type        = string
-  default     = "lab/rds/mysql1"
+  default     = "lab/rds/mysql_v3"
 }
 
 variable "db_instance_class" {

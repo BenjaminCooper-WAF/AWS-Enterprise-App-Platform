@@ -29,7 +29,7 @@ set -euo pipefail
 # ---------- Defaults (override via env or flags) ----------
 REGION="${REGION:-eu-west-2}"
 INSTANCE_ID="${INSTANCE_ID:-i-0c5aa4f712c66ce1b}"
-SECRET_ID="${SECRET_ID:-lab1a-rds-mysql}"
+SECRET_ID="${SECRET_ID:-lab-rds-mysql_v5}"
 OUT_JSON="${OUT_JSON:-gate_result.json}"
 
 # toggles (default: strict but sane)
@@ -77,13 +77,13 @@ Optional toggles (env vars):
   OUT_JSON=gate_result.json                  (default: gate_result.json)
 
 Examples:
-  REGION=eu-west-2 INSTANCE_ID=i-0c5aa4f712c66ce1b SECRET_ID=lab1a-rds-mysql ./gate_secrets_and_role.sh
+  REGION=eu-west-2 INSTANCE_ID=i-0c5aa4f712c66ce1b SECRET_ID=lab/rds/mysql_v3 ./gate_secrets_and_role.sh
 
   # Strict rotation requirement:
-  REQUIRE_ROTATION=true REGION=eu-west-2 INSTANCE_ID=i-0c5aa4f712c66ce1b SECRET_ID=lab1a-rds-mysql ./gate_secrets_and_role.sh
+  REQUIRE_ROTATION=true REGION=eu-west-2 INSTANCE_ID=i-0c5aa4f712c66ce1b SECRET_ID=lab/rds/mysql_v3 ./gate_secrets_and_role.sh
 
   # Run on the EC2 and verify it can read the secret value (does NOT print it):
-  CHECK_SECRET_VALUE_READ=true REGION=eu-west-2 INSTANCE_ID=i-0c5aa4f712c66ce1b SECRET_ID=lab1a-rds-mysql ./gate_secrets_and_role.sh
+  CHECK_SECRET_VALUE_READ=true REGION=eu-west-2 INSTANCE_ID=i-0c5aa4f712c66ce1b SECRET_ID=lab/rds/mysql_v3 ./gate_secrets_and_role.sh
 EOF
 }
 
